@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>水厂泵站设备档案</title>
+  <style>
+    :root { color-scheme: light; font-family: system-ui, sans-serif; background: #f4f7f9; color: #1d2a35; }
+    body { margin: 0; }
+    header { padding: 24px 32px; background: #0f4c5c; color: white; }
+    main { max-width: 1180px; margin: 24px auto; padding: 0 20px; }
+    .toolbar, .panel { background: white; border: 1px solid #d7e0e6; border-radius: 6px; padding: 18px; margin-bottom: 16px; }
+    .toolbar { display: flex; gap: 12px; flex-wrap: wrap; }
+    input, select, button { font: inherit; padding: 8px 10px; border: 1px solid #bac7d0; border-radius: 4px; }
+    button { background: #0f4c5c; color: white; cursor: pointer; }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 10px; border-bottom: 1px solid #e4eaee; }
+    tr[data-id] { cursor: pointer; }
+    .muted { color: #60717e; }
+    #message { min-height: 1.5em; color: #9b2c2c; }
+  </style>
+</head>
+<body>
+  <header><h1>水厂泵站设备档案</h1></header>
+  <main>
+    <section class="toolbar">
+      <input id="query" placeholder="泵站、设备编号或责任班组">
+      <button id="search">搜索</button>
+      <button id="new">新建设备档案</button>
+    </section>
+    <div id="message" role="status"></div>
+    <section class="panel">
+      <table>
+        <thead><tr><th>泵站名称</th><th>设备编号</th><th>功率</th><th>安装位置</th><th>责任班组</th><th>投运日期</th><th>运行状态</th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </section>
+    <section class="panel" id="editor" hidden>
+      <h2>设备档案</h2>
+      <form id="form">
+        <input type="hidden" id="id">
+        <p><label>泵站名称 <input required id="station_name"></label></p>
+        <p><label>设备编号 <input required id="equipment_number"></label></p>
+        <p><label>功率 <input required min="0.1" step="0.1" type="number" id="power"></label></p>
+        <p><label>安装位置 <input required id="installation_site"></label></p>
+        <p><label>责任班组 <input required id="responsible_team"></label></p>
+        <p><label>投运日期 <input required type="date" id="commissioned_on"></label></p>
+        <p><label>运行状态 <select id="running_status"><option>运行</option><option>停运</option><option>维修</option><option>报废</option></select></label></p>
+        <p><label>附件 JSON <textarea id="attachments" rows="5" cols="64" placeholder='[{"id":"UUID","file_name":"设备照片.jpg","storage_key":"fixture/photo.jpg","size":1024}]'></textarea></label></p>
+        <button type="submit">保存</button>
+        <button type="button" id="cancel">取消</button>
+      </form>
+    </section>
+    <section class="panel" id="logs-panel" hidden>
+      <h2>操作日志</h2>
+      <table><thead><tr><th>动作</th><th>详情</th><th>结果</th></tr></thead><tbody id="log-rows"></tbody></table>
+    </section>
+  </main>
+  <script>
+    const state = { items: [] };
+    const $ = (id) => document.getElementById(id);
+    const message = (text = "") => { $("message").textContent = text; };
+    async function load() {
+      const response = await fetch(`/api/equipment?query=${encodeURIComponent($("query").value)}&page=1&page_size=100`);
+      const page = await response.json();
+      state.items = page.items || [];
+      $("rows").innerHTML = state.items.map((item) => `<tr data-id="${item.id}"><td>${item.station_name}</td><td>${item.equipment_number}</td><td>${item.power} kW</td><td>${item.installation_site}</td><td>${item.responsible_team}</td><td>${item.commissioned_on}</td><td>${item.running_status}</td></tr>`).join("");
+      document.querySelectorAll("tr[data-id]").forEach((row) => row.addEventListener("click", () => edit(row.dataset.id)));
+    }
+    function show(item = {}) {
+      $("editor").hidden = false;
+      ["id", "station_name", "equipment_number", "power", "installation_site", "responsible_team", "commissioned_on", "running_status"].forEach((key) => { if (item[key] !== undefined) $(key).value = item[key]; else $(key).value = ""; });
+      $("attachments").value = JSON.stringify(item.attachments || [], null, 2);
+    }
+    async function edit(id) {
+      const response = await fetch(`/api/equipment/${id}`);
+      if (!response.ok) { message("设备档案读取失败"); return; }
+      const item = await response.json();
+      show(item);
+      await loadLogs(id);
+    }
+    async function loadLogs(id) {
+      const response = await fetch(`/api/equipment/${id}/logs`);
+      if (!response.ok) { message("操作日志读取失败"); return; }
+      const body = await response.json();
+      $("logs-panel").hidden = false;
+      $("log-rows").innerHTML = (body.items || []).map((log) => `<tr><td>${log.action}</td><td>${log.detail}</td><td>${log.result}</td></tr>`).join("");
+    }
+    $("search").addEventListener("click", load);
+    $("new").addEventListener("click", () => { $("logs-panel").hidden = true; show({ running_status: "运行", commissioned_on: new Date().toISOString().slice(0, 10), power: 1, attachments: [] }); });
+    $("cancel").addEventListener("click", () => { $("editor").hidden = true; $("logs-panel").hidden = true; });
+    $("form").addEventListener("submit", async (event) => {
+      event.preventDefault();
+      const id = $("id").value;
+      let attachments;
+      try { attachments = JSON.parse($("attachments").value || "[]"); } catch { message("附件 JSON 格式无效"); return; }
+      const payload = { station_name: $("station_name").value, equipment_number: $("equipment_number").value, power: Number($("power").value), installation_site: $("installation_site").value, responsible_team: $("responsible_team").value, commissioned_on: $("commissioned_on").value, running_status: $("running_status").value, attachments };
+      const response = await fetch(id ? `/api/equipment/${id}` : "/api/equipment", { method: id ? "PUT" : "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(payload) });
+      if (!response.ok) { const body = await response.json(); message(body.error || "保存失败"); return; }
+      message("保存成功"); $("editor").hidden = true; await load();
+    });
+    load().catch(() => message("设备档案读取失败"));
+  </script>
+</body>
+</html>
