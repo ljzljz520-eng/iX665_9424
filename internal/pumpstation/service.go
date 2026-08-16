@@ -84,13 +84,11 @@ func (s *Service) Update(id string, request EditRequest) (Equipment, error) {
 	}
 	previousNextID := s.store.nextID
 	s.store.equipment[id] = cloneEquipment(updated)
-	var err error
-	err = s.store.attachments.Save(id, updated.Attachments)
-	err = s.store.writeLog(id, "编辑设备档案", "附件已经更新", "成功")
-	if err != nil {
+	if err := s.store.attachments.Save(id, updated.Attachments); err != nil {
 		s.store.restore(id, previous, previousLogs, previousNextID)
 		return Equipment{}, err
 	}
+	s.store.writeLog(id, "编辑设备档案", "附件已经更新", "成功")
 	return cloneEquipment(updated), nil
 }
 
